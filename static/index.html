@@ -143,6 +143,14 @@
       color: var(--accent);
     }
 
+    .power-status {
+      margin: 0.75rem 0 0;
+      min-height: 1.1em;
+      font-size: 0.85rem;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+    }
+
     .hint {
       margin: 0.75rem 0 0;
       color: var(--muted);
@@ -231,6 +239,7 @@
           </div>
         </div>
       </div>
+      <p id="power-status" class="power-status hidden"></p>
       <p class="hint">Arrows / WASD to move &middot; Space to pause</p>
       <p class="scoreline">Score: <span id="score">0</span> &middot;
         Board leader: <span id="best">&ndash;</span></p>
@@ -255,6 +264,18 @@
     const SPEEDUP_PER_FOOD = 3; // ms shaved off per food eaten
     const POINTS_PER_FOOD = 10;
 
+    // Power-ups. "life" is the effect duration in ticks; 0 means the
+    // effect is instant. Colors double as the snake tint while active.
+    const POWER_TYPES = {
+      slow:   { label: "SLOW-MO",   glyph: "S",  color: "#60a5fa", life: 40 },
+      ghost:  { label: "GHOST",     glyph: "G",  color: "#22d3ee", life: 40 },
+      double: { label: "2x POINTS", glyph: "2x", color: "#facc15", life: 64 },
+      shrink: { label: "SHRINK",    glyph: "-",  color: "#f472b6", life: 0 },
+    };
+    const POWER_LIFE_BOARD = 50; // ticks a power-up stays on the board
+    const POWER_CHANCE = 0.3;    // chance of one spawning per food eaten
+    const SHRINK_CELLS = 3;
+
     // When served by app.py the API is same-origin; when this page is
     // opened directly (file://), talk to the local server explicitly.
     const API_BASE =
@@ -274,6 +295,7 @@
     const scoreEl = document.getElementById("score");
     const bestEl = document.getElementById("best");
     const listEl = document.getElementById("highscores");
+    const powerStatusEl = document.getElementById("power-status");
 
     const UP = { x: 0, y: -1 };
     const DOWN = { x: 0, y: 1 };
@@ -282,6 +304,8 @@
 
     let snake, dir, dirQueue, food, score, tickMs, timer;
     let started, paused, gameOver;
+    let powerUp; // {x, y, type, left} — on the board, or null
+    let active;  // {type, left} — effect currently applied, or null
 
     function reset() {
       const mid = Math.floor(GRID / 2);
@@ -297,6 +321,8 @@
       started = false;
       paused = false;
       gameOver = false;
+      powerUp = null;
+      active = null;
       food = placeFood();
       scoreEl.textContent = "0";
       hideOverlay();
@@ -307,10 +333,53 @@
       const free = [];
       for (let x = 0; x < GRID; x++) {
         for (let y = 0; y < GRID; y++) {
-          if (!snake.some((s) => s.x === x && s.y === y)) free.push({ x, y });
+          if (
+            !snake.some((s) => s.x === x && s.y === y) &&
+            !(powerUp && powerUp.x === x && powerUp.y === y)
+          ) {
+            free.push({ x, y });
+          }
         }
       }
       return free[Math.floor(Math.random() * free.length)];
+    }
+
+    function pickPowerType() {
+      const r = Math.random();
+      if (r < 0.3) return "slow";
+      if (r < 0.6) return "ghost";
+      if (r < 0.9) return "double";
+      return "shrink";
+    }
+
+    // Called when a food is eaten: with POWER_CHANCE a power-up appears
+    // on a free cell. Returns null when nothing spawns.
+    function spawnPowerUp() {
+      const type = pickPowerType();
+      const free = [];
+      for (let x = 0; x < GRID; x++) {
+        for (let y = 0; y < GRID; y++) {
+          if (
+            !snake.some((s) => s.x === x && s.y === y) &&
+            !(food.x === x && food.y === y)
+          ) {
+            free.push({ x, y });
+          }
+        }
+      }
+      if (!free.length) return null;
+      const cell = free[Math.floor(Math.random() * free.length)];
+      return { ...cell, type, left: POWER_LIFE_BOARD };
+    }
+
+    function applyPower(type) {
+      if (type === "shrink") {
+        // Instant: lose SHRINK_CELLS, but never the last segment.
+        const cut = Math.min(SHRINK_CELLS, snake.length - 1);
+        for (let i = 0; i < cut; i++) snake.pop();
+      } else {
+        active = { type, left: POWER_TYPES[type].life };
+      }
     }
 
     function queueDir(d) {
@@ -325,17 +394,34 @@
     }
 
     function step() {
+      if (active) {
+        active.left--;
+        if (active.left <= 0) active = null;
+      }
+      if (powerUp) {
+        powerUp.left--;
+        if (powerUp.left <= 0) powerUp = null;
+      }
+
       if (dirQueue.length) dir = dirQueue.shift();
 
-      const head = { x: snake[0].x + dir.x, y: snake[0].y + dir.y };
-      const eats = head.x === food.x && head.y === food.y;
+      const ghost = active && active.type === "ghost";
+      let head = { x: snake[0].x + dir.x, y: snake[0].y + dir.y };
+      if (ghost) {
+        // Ghost: wrap around walls.
+        head.x = (head.x + GRID) % GRID;
+        head.y = (head.y + GRID) % GRID;
+      }
 
-      // Walls always kill; the tail cell is safe to enter unless we grow.
+      const eats = head.x === food.x && head.y === food.y;
+      const eatsPower = !!powerUp && head.x === powerUp.x && head.y === powerUp.y;
+
+      // Walls kill (unless ghost); the tail cell is safe to enter unless
+      // we grow; ghost passes through its own body.
       const body = eats ? snake : snake.slice(0, -1);
-      if (
-        head.x < 0 || head.x >= GRID || head.y < 0 || head.y >= GRID ||
-        body.some((s) => s.x === head.x && s.y === head.y)
-      ) {
+      const hitWall =
+        head.x < 0 || head.x >= GRID || head.y < 0 || head.y >= GRID;
+      if (hitWall || (!ghost && body.some((s) => s.x === head.x && s.y === head.y))) {
         gameOver = true;
         showGameOver();
         return;
@@ -343,27 +429,43 @@
 
       snake.unshift(head);
       if (eats) {
-        score += POINTS_PER_FOOD;
+        const double = active && active.type === "double";
+        score += double ? POINTS_PER_FOOD * 2 : POINTS_PER_FOOD;
         scoreEl.textContent = String(score);
         tickMs = Math.max(MIN_SPEED_MS, tickMs - SPEEDUP_PER_FOOD);
         food = placeFood();
+        if (powerUp === null && Math.random() < POWER_CHANCE) {
+          powerUp = spawnPowerUp();
+        }
         if (snake.length === GRID * GRID) {
           gameOver = true;
           showGameOver("You win!");
           return;
         }
+      } else if (eatsPower) {
+        // Power-ups don't grow the snake.
+        const type = powerUp.type;
+        powerUp = null;
+        snake.pop();
+        applyPower(type);
       } else {
         snake.pop();
       }
       draw();
     }
 
+    function currentInterval() {
+      return active && active.type === "slow" ? tickMs * 2 : tickMs;
+    }
+
+    function tick() {
+      if (started && !paused && !gameOver) step();
+      if (!gameOver) scheduleTick();
+    }
+
     function scheduleTick() {
       clearTimeout(timer);
-      timer = setTimeout(() => {
-        if (started && !paused && !gameOver) step();
-        if (!gameOver) scheduleTick();
-      }, tickMs);
+      timer = setTimeout(tick, currentInterval());
     }
 
     function start() {
@@ -399,11 +501,46 @@
       );
       ctx.fill();
 
-      // Snake: head bright, body slightly dimmer.
+      // Power-up on the board: colored circle with its glyph.
+      if (powerUp) {
+        const def = POWER_TYPES[powerUp.type];
+        const cx = powerUp.x * CELL + CELL / 2;
+        const cy = powerUp.y * CELL + CELL / 2;
+        ctx.fillStyle = def.color;
+        ctx.beginPath();
+        ctx.arc(cx, cy, CELL / 2 - 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = "#0f172a";
+        ctx.font = "bold 11px system-ui, sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(def.glyph, cx, cy + 1);
+      }
+
+      // Snake: tinted by the active effect, otherwise green.
+      const tint = active ? POWER_TYPES[active.type].color : null;
       snake.forEach((seg, i) => {
-        ctx.fillStyle = i === 0 ? "#4ade80" : "#22c55e";
+        ctx.fillStyle = tint ?? (i === 0 ? "#4ade80" : "#22c55e");
         ctx.fillRect(seg.x * CELL + 1, seg.y * CELL + 1, CELL - 2, CELL - 2);
       });
+
+      updatePowerStatus();
+    }
+
+    function updatePowerStatus() {
+      if (active) {
+        const def = POWER_TYPES[active.type];
+        powerStatusEl.textContent = `${def.label} ${active.left}`;
+        powerStatusEl.style.color = def.color;
+        powerStatusEl.classList.remove("hidden");
+      } else if (powerUp) {
+        powerStatusEl.textContent = "Power-up on the board!";
+        powerStatusEl.style.color = POWER_TYPES[powerUp.type].color;
+        powerStatusEl.classList.remove("hidden");
+      } else {
+        powerStatusEl.textContent = "";
+        powerStatusEl.classList.add("hidden");
+      }
     }
 
     function showGameOver(title = "Game over") {

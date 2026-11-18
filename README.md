@@ -34,6 +34,11 @@ it will save scores to the local server automatically).
   `setTimeout` tick loop, a direction queue (so quick key presses don't
   cause self-reversal), random food placement, and speed that ramps up as
   the snake grows.
+- Power-ups: eating a food can spawn a timed power-up on the board.
+  **SLOW-MO** halves the tick rate, **GHOST** lets you pass through walls
+  and your own body, **2x POINTS** doubles food score, and **SHRINK** cuts
+  three segments off the snake. Active effects show a countdown under the
+  board and tint the snake.
 - The backend is only the shared high-score board:
   `GET /api/highscores` returns the top 10, `POST /api/highscores` adds an
   entry. Scores persist in `scores.db` (SQLite).
