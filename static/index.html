@@ -47,12 +47,25 @@
       padding: 1.25rem;
     }
 
+    .title-row {
+      position: relative;
+      width: 100%;
+    }
+
     h1 {
       margin: 0 0 0.75rem;
       font-size: 1.5rem;
       letter-spacing: 0.15em;
       text-transform: uppercase;
       color: var(--accent);
+    }
+
+    .icon-btn {
+      position: absolute;
+      right: 0;
+      top: -0.2rem;
+      padding: 0.2rem 0.45rem;
+      font-size: 1rem;
     }
 
     .board-wrap {
@@ -221,7 +234,10 @@
 <body>
   <main class="layout">
     <section class="game-panel">
-      <h1>Snake</h1>
+      <div class="title-row">
+        <h1>Snake</h1>
+        <button id="mute-btn" class="icon-btn" title="Sound on — press M to mute">🔊</button>
+      </div>
       <div class="board-wrap">
         <canvas id="board" width="400" height="400"></canvas>
         <div id="overlay" class="overlay hidden">
@@ -283,6 +299,76 @@
         ? ""
         : "http://127.0.0.1:8000";
 
+    // ---- Sound: tiny Web Audio synth, no asset files. The AudioContext
+    // is created lazily on the first sound (browsers require a user
+    // gesture first); if audio is unavailable everything is a no-op. ----
+    let audioCtx = null;
+    let muted = localStorage.getItem("snake-muted") === "1";
+
+    function ensureAudio() {
+      if (muted) return null;
+      try {
+        if (!audioCtx) {
+          const AC = window.AudioContext || window.webkitAudioContext;
+          if (!AC) return null;
+          audioCtx = new AC();
+        }
+        if (audioCtx.state === "suspended") audioCtx.resume();
+        return audioCtx;
+      } catch {
+        return null;
+      }
+    }
+
+    function beep({ freq = 440, end = freq, dur = 0.08, type = "square", gain = 0.04, delay = 0 }) {
+      const ctx = ensureAudio();
+      if (!ctx) return;
+      try {
+        const t0 = ctx.currentTime + delay;
+        const osc = ctx.createOscillator();
+        const g = ctx.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, t0);
+        if (end !== freq) osc.frequency.exponentialRampToValueAtTime(end, t0 + dur);
+        g.gain.setValueAtTime(gain, t0);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+        osc.connect(g).connect(ctx.destination);
+        osc.start(t0);
+        osc.stop(t0 + dur + 0.02);
+      } catch {
+        // Never let a bleep take the game down.
+      }
+    }
+
+    function sound(name) {
+      switch (name) {
+        case "eat":
+          beep({ freq: 660, dur: 0.07, type: "square" });
+          break;
+        case "spawn":
+          beep({ freq: 880, dur: 0.05, type: "triangle", gain: 0.02 });
+          break;
+        case "power":
+          beep({ freq: 523, dur: 0.07, type: "triangle" });
+          beep({ freq: 784, dur: 0.09, type: "triangle", delay: 0.07 });
+          break;
+        case "shrink":
+          beep({ freq: 300, end: 120, dur: 0.15, type: "sawtooth" });
+          break;
+        case "die":
+          beep({ freq: 220, end: 55, dur: 0.4, type: "sawtooth", gain: 0.05 });
+          break;
+        case "win":
+          [523, 659, 784, 1047].forEach((f, i) =>
+            beep({ freq: f, dur: 0.12, type: "triangle", delay: i * 0.1 })
+          );
+          break;
+        case "pause":
+          beep({ freq: 440, dur: 0.04, type: "sine", gain: 0.03 });
+          break;
+      }
+    }
+
     const canvas = document.getElementById("board");
     const ctx = canvas.getContext("2d");
     const overlay = document.getElementById("overlay");
@@ -296,6 +382,7 @@
     const bestEl = document.getElementById("best");
     const listEl = document.getElementById("highscores");
     const powerStatusEl = document.getElementById("power-status");
+    const muteBtn = document.getElementById("mute-btn");
 
     const UP = { x: 0, y: -1 };
     const DOWN = { x: 0, y: 1 };
@@ -306,6 +393,14 @@
     let started, paused, gameOver;
     let powerUp; // {x, y, type, left} — on the board, or null
     let active;  // {type, left} — effect currently applied, or null
+
+    // Rendering: the logic ticks discretely, but drawing interpolates
+    // between the pre-step snapshot (prevSnake) and the current position,
+    // and particles are updated every animation frame.
+    let prevSnake = null;
+    let lastStepAt = 0;
+    let lastInterval = BASE_SPEED_MS;
+    let particles = [];
 
     function reset() {
       const mid = Math.floor(GRID / 2);
@@ -323,6 +418,10 @@
       gameOver = false;
       powerUp = null;
       active = null;
+      prevSnake = null;
+      particles = [];
+      lastStepAt = performance.now();
+      lastInterval = BASE_SPEED_MS;
       food = placeFood();
       scoreEl.textContent = "0";
       hideOverlay();
@@ -393,6 +492,10 @@
       if (dirQueue.length < 3) dirQueue.push(d);
     }
 
+    function cellCenter(c) {
+      return { x: c.x * CELL + CELL / 2, y: c.y * CELL + CELL / 2 };
+    }
+
     function step() {
       if (active) {
         active.left--;
@@ -423,12 +526,16 @@
         head.x < 0 || head.x >= GRID || head.y < 0 || head.y >= GRID;
       if (hitWall || (!ghost && body.some((s) => s.x === head.x && s.y === head.y))) {
         gameOver = true;
+        sound("die");
         showGameOver();
         return;
       }
 
       snake.unshift(head);
       if (eats) {
+        sound("eat");
+        const c = cellCenter(food);
+        spawnBurst(c.x, c.y, "#f87171", 10);
         const double = active && active.type === "double";
         score += double ? POINTS_PER_FOOD * 2 : POINTS_PER_FOOD;
         scoreEl.textContent = String(score);
@@ -436,18 +543,23 @@
         food = placeFood();
         if (powerUp === null && Math.random() < POWER_CHANCE) {
           powerUp = spawnPowerUp();
+          if (powerUp) sound("spawn");
         }
         if (snake.length === GRID * GRID) {
           gameOver = true;
+          sound("win");
           showGameOver("You win!");
           return;
         }
       } else if (eatsPower) {
         // Power-ups don't grow the snake.
         const type = powerUp.type;
+        const c = cellCenter(powerUp);
+        spawnBurst(c.x, c.y, POWER_TYPES[type].color, 14);
         powerUp = null;
         snake.pop();
         applyPower(type);
+        sound(type === "shrink" ? "shrink" : "power");
       } else {
         snake.pop();
       }
@@ -459,7 +571,12 @@
     }
 
     function tick() {
-      if (started && !paused && !gameOver) step();
+      if (started && !paused && !gameOver) {
+        prevSnake = snake.map((c) => ({ ...c }));
+        lastStepAt = performance.now();
+        lastInterval = currentInterval();
+        step();
+      }
       if (!gameOver) scheduleTick();
     }
 
@@ -474,7 +591,8 @@
       scheduleTick();
     }
 
-    function draw() {
+    function draw(now) {
+      if (now === undefined) now = performance.now();
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
       // Faint grid lines.
@@ -517,14 +635,72 @@
         ctx.fillText(def.glyph, cx, cy + 1);
       }
 
-      // Snake: tinted by the active effect, otherwise green.
+      // Snake: tinted by the active effect, otherwise green. Each segment
+      // glides from its pre-step cell to its current one; jumps bigger
+      // than a cell (ghost wrap, shrink) snap instead of sliding.
+      const t = prevSnake
+        ? Math.min(1, (now - lastStepAt) / Math.max(1, lastInterval))
+        : 1;
       const tint = active ? POWER_TYPES[active.type].color : null;
       snake.forEach((seg, i) => {
+        const prev = prevSnake && prevSnake[i];
+        let x = seg.x, y = seg.y;
+        if (prev && Math.abs(prev.x - x) + Math.abs(prev.y - y) <= 1) {
+          x = prev.x + (x - prev.x) * t;
+          y = prev.y + (y - prev.y) * t;
+        }
         ctx.fillStyle = tint ?? (i === 0 ? "#4ade80" : "#22c55e");
-        ctx.fillRect(seg.x * CELL + 1, seg.y * CELL + 1, CELL - 2, CELL - 2);
+        ctx.fillRect(x * CELL + 1, y * CELL + 1, CELL - 2, CELL - 2);
       });
 
+      // Particles (eat / power-up bursts).
+      for (const p of particles) {
+        ctx.globalAlpha = Math.max(0, p.left / p.life);
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r * (p.left / p.life) + 0.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+
       updatePowerStatus();
+    }
+
+    function spawnBurst(x, y, color, n = 12) {
+      for (let i = 0; i < n; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = 40 + Math.random() * 90; // px/s
+        const life = 0.4 + Math.random() * 0.2;
+        particles.push({
+          x,
+          y,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed,
+          r: 2 + Math.random() * 2,
+          life,
+          left: life,
+          color,
+        });
+      }
+    }
+
+    function updateParticles(dt) {
+      for (const p of particles) {
+        p.left -= dt;
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+      }
+      particles = particles.filter((p) => p.left > 0);
+    }
+
+    let lastFrameAt = 0;
+    function frame(now) {
+      if (now === undefined) now = performance.now();
+      const dt = Math.min(0.05, (now - lastFrameAt) / 1000);
+      lastFrameAt = now;
+      if (dt > 0) updateParticles(dt);
+      draw(now);
+      requestAnimationFrame(frame);
     }
 
     function updatePowerStatus() {
@@ -556,9 +732,26 @@
       overlay.classList.add("hidden");
     }
 
+    function setMuted(m) {
+      muted = m;
+      muteBtn.textContent = muted ? "\u{1F507}" : "\u{1F50A}";
+      muteBtn.title = muted ? "Sound off — press M to enable" : "Sound on — press M to mute";
+      try {
+        localStorage.setItem("snake-muted", muted ? "1" : "0");
+      } catch {
+        // Storage unavailable (e.g. some private modes); just play on.
+      }
+    }
+
+    function toggleMute() {
+      setMuted(!muted);
+      if (!muted) sound("pause"); // confirmation blip
+    }
+
     function togglePause() {
       if (!started || gameOver) return;
       paused = !paused;
+      sound("pause");
       if (paused) {
         overlayTitle.textContent = "Paused";
         overlayScore.textContent = "Press Space to resume";
@@ -589,10 +782,13 @@
         togglePause();
       } else if (e.key === "Enter" && gameOver) {
         start();
+      } else if ((e.key === "m" || e.key === "M") && e.target !== nameInput) {
+        toggleMute();
       }
     });
 
     restartBtn.addEventListener("click", start);
+    muteBtn.addEventListener("click", toggleMute);
 
     saveForm.addEventListener("submit", async (e) => {
       e.preventDefault();
@@ -644,9 +840,12 @@
 
     // Restore the player's name from a previous session.
     nameInput.value = localStorage.getItem("snake-name") ?? "";
+    setMuted(muted);
 
     start();
     loadHighscores();
+    lastFrameAt = performance.now();
+    requestAnimationFrame(frame);
   </script>
 </body>
 </html>

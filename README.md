@@ -39,6 +39,15 @@ it will save scores to the local server automatically).
   and your own body, **2x POINTS** doubles food score, and **SHRINK** cuts
   three segments off the snake. Active effects show a countdown under the
   board and tint the snake.
+- Sound: tiny synthesized blips via the Web Audio API (no asset files) for
+  eating, power-ups, shrinking, dying, winning, and pausing. The
+  `AudioContext` is created lazily on first sound; everything is a no-op
+  if audio is unavailable. Mute with **M** or the speaker button; the
+  preference persists in `localStorage`.
+- Smooth motion: the game logic ticks discretely, but the canvas redraws
+  every animation frame, gliding each segment between its previous and
+  current cell (jumps like ghost-wraps snap instead of sliding). Eating
+  food or a power-up pops a short particle burst at the spot.
 - The backend is only the shared high-score board:
   `GET /api/highscores` returns the top 10, `POST /api/highscores` adds an
   entry. Scores persist in `scores.db` (SQLite).
@@ -50,3 +59,4 @@ it will save scores to the local server automatically).
 - **Arrows / WASD** — steer
 - **Space** — pause / resume
 - **Enter** — restart after game over
+- **M** — mute / unmute sound
