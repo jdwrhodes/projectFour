@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Snake — projectFour</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <main class="layout">
+    <section class="game-panel">
+      <h1>Snake</h1>
+      <div class="board-wrap">
+        <canvas id="board" width="400" height="400"></canvas>
+        <div id="overlay" class="overlay hidden">
+          <div class="overlay-card">
+            <h2 id="overlay-title">Game over</h2>
+            <p id="overlay-score"></p>
+            <form id="save-form" class="hidden">
+              <label for="player-name">Name</label>
+              <input id="player-name" type="text" maxlength="20" required
+                     autocomplete="off" placeholder="Your name">
+              <button type="submit">Save score</button>
+            </form>
+            <p id="save-status" class="status"></p>
+            <button id="restart-btn" class="primary">Play again</button>
+          </div>
+        </div>
+      </div>
+      <p class="hint">Arrows / WASD to move &middot; Space to pause</p>
+      <p class="scoreline">Score: <span id="score">0</span> &middot;
+        Board leader: <span id="best">&ndash;</span></p>
+    </section>
+
+    <aside class="scores-panel">
+      <h2>High scores</h2>
+      <ol id="highscores"></ol>
+    </aside>
+  </main>
+  <script src="/static/game.js"></script>
+</body>
+</html>
