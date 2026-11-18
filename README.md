@@ -16,17 +16,24 @@ uv pip install --python .venv/bin/python fastapi "uvicorn[standard]"
 
 ## Run
 
+The game is a single self-contained page — you can just open
+`static/index.html` in a browser (double-click it) and play.
+
+To also use the shared high-score board, run the server:
+
 ```sh
 .venv/bin/python app.py
 ```
 
-Then open <http://127.0.0.1:8000>.
+Then open <http://127.0.0.1:8000> (or keep playing from the opened file —
+it will save scores to the local server automatically).
 
 ## How it works
 
-- All game logic lives in `static/game.js`: a `setTimeout` tick loop, a
-  direction queue (so quick key presses don't cause self-reversal), random
-  food placement, and speed that ramps up as the snake grows.
+- The whole game lives in `static/index.html` (inline CSS + JS): a
+  `setTimeout` tick loop, a direction queue (so quick key presses don't
+  cause self-reversal), random food placement, and speed that ramps up as
+  the snake grows.
 - The backend is only the shared high-score board:
   `GET /api/highscores` returns the top 10, `POST /api/highscores` adds an
   entry. Scores persist in `scores.db` (SQLite).

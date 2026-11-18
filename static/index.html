@@ -4,7 +4,211 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Snake — projectFour</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <style>
+    :root {
+      --bg: #0f172a;
+      --panel: #1e293b;
+      --border: #334155;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --accent: #4ade80;
+      --accent-dark: #166534;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 2rem 1rem;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    }
+
+    .layout {
+      display: flex;
+      gap: 1.5rem;
+      align-items: flex-start;
+    }
+
+    .game-panel {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.25rem;
+    }
+
+    h1 {
+      margin: 0 0 0.75rem;
+      font-size: 1.5rem;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+
+    .board-wrap {
+      position: relative;
+    }
+
+    #board {
+      display: block;
+      background: #0b1220;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+    }
+
+    .overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(15, 23, 42, 0.85);
+      border-radius: 6px;
+    }
+
+    .overlay-card {
+      text-align: center;
+      padding: 1rem 2rem;
+    }
+
+    .overlay-card h2 {
+      margin: 0 0 0.25rem;
+      font-size: 1.4rem;
+    }
+
+    #overlay-score {
+      margin: 0 0 1rem;
+      color: var(--muted);
+    }
+
+    #save-form {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      margin-bottom: 0.75rem;
+    }
+
+    #save-form label {
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+
+    #save-form input {
+      padding: 0.4rem 0.5rem;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--bg);
+      color: var(--text);
+      text-align: center;
+    }
+
+    button {
+      font: inherit;
+      padding: 0.45rem 1rem;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: var(--bg);
+      color: var(--text);
+      cursor: pointer;
+    }
+
+    button:hover {
+      border-color: var(--accent);
+    }
+
+    button.primary {
+      background: var(--accent-dark);
+      border-color: var(--accent-dark);
+    }
+
+    button.primary:hover {
+      background: var(--accent);
+      color: var(--bg);
+    }
+
+    .status {
+      min-height: 1.2em;
+      margin: 0.5rem 0;
+      font-size: 0.85rem;
+      color: var(--accent);
+    }
+
+    .hint {
+      margin: 0.75rem 0 0;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+
+    .scoreline {
+      margin: 0.25rem 0 0;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    .scoreline span {
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    .scores-panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.25rem;
+      width: 220px;
+    }
+
+    .scores-panel h2 {
+      margin: 0 0 0.75rem;
+      font-size: 1rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--muted);
+    }
+
+    #highscores {
+      list-style-position: inside;
+      margin: 0;
+      padding: 0;
+    }
+
+    #highscores li {
+      display: flex;
+      justify-content: space-between;
+      gap: 0.5rem;
+      padding: 0.4rem 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    #highscores li:last-child {
+      border-bottom: none;
+    }
+
+    #highscores .score {
+      font-weight: 600;
+      color: var(--accent);
+    }
+
+    #highscores .empty {
+      justify-content: center;
+      color: var(--muted);
+      border-bottom: none;
+    }
+
+    .hidden {
+      display: none !important;
+    }
+  </style>
 </head>
 <body>
   <main class="layout">
@@ -37,6 +241,275 @@
       <ol id="highscores"></ol>
     </aside>
   </main>
-  <script src="/static/game.js"></script>
+
+  <script>
+    // Snake — all game logic lives in this file. The server (app.py)
+    // only stores the shared high-score board, so the page also works
+    // when opened directly as a file (no server: high scores just won't
+    // be saved).
+
+    const GRID = 20;           // cells per side
+    const CELL = 20;           // px per cell
+    const BASE_SPEED_MS = 120; // tick interval at the start
+    const MIN_SPEED_MS = 60;   // fastest tick
+    const SPEEDUP_PER_FOOD = 3; // ms shaved off per food eaten
+    const POINTS_PER_FOOD = 10;
+
+    // When served by app.py the API is same-origin; when this page is
+    // opened directly (file://), talk to the local server explicitly.
+    const API_BASE =
+      location.protocol === "http:" || location.protocol === "https:"
+        ? ""
+        : "http://127.0.0.1:8000";
+
+    const canvas = document.getElementById("board");
+    const ctx = canvas.getContext("2d");
+    const overlay = document.getElementById("overlay");
+    const overlayTitle = document.getElementById("overlay-title");
+    const overlayScore = document.getElementById("overlay-score");
+    const saveForm = document.getElementById("save-form");
+    const nameInput = document.getElementById("player-name");
+    const saveStatus = document.getElementById("save-status");
+    const restartBtn = document.getElementById("restart-btn");
+    const scoreEl = document.getElementById("score");
+    const bestEl = document.getElementById("best");
+    const listEl = document.getElementById("highscores");
+
+    const UP = { x: 0, y: -1 };
+    const DOWN = { x: 0, y: 1 };
+    const LEFT = { x: -1, y: 0 };
+    const RIGHT = { x: 1, y: 0 };
+
+    let snake, dir, dirQueue, food, score, tickMs, timer;
+    let started, paused, gameOver;
+
+    function reset() {
+      const mid = Math.floor(GRID / 2);
+      snake = [
+        { x: mid, y: mid },
+        { x: mid - 1, y: mid },
+        { x: mid - 2, y: mid },
+      ];
+      dir = RIGHT;
+      dirQueue = [];
+      score = 0;
+      tickMs = BASE_SPEED_MS;
+      started = false;
+      paused = false;
+      gameOver = false;
+      food = placeFood();
+      scoreEl.textContent = "0";
+      hideOverlay();
+      draw();
+    }
+
+    function placeFood() {
+      const free = [];
+      for (let x = 0; x < GRID; x++) {
+        for (let y = 0; y < GRID; y++) {
+          if (!snake.some((s) => s.x === x && s.y === y)) free.push({ x, y });
+        }
+      }
+      return free[Math.floor(Math.random() * free.length)];
+    }
+
+    function queueDir(d) {
+      if (!started && !paused && !gameOver) {
+        started = true;
+      }
+      const last = dirQueue.length ? dirQueue[dirQueue.length - 1] : dir;
+      // Ignore no-ops and 180-degree reversals.
+      if (d.x === last.x && d.y === last.y) return;
+      if (d.x === -last.x && d.y === -last.y) return;
+      if (dirQueue.length < 3) dirQueue.push(d);
+    }
+
+    function step() {
+      if (dirQueue.length) dir = dirQueue.shift();
+
+      const head = { x: snake[0].x + dir.x, y: snake[0].y + dir.y };
+      const eats = head.x === food.x && head.y === food.y;
+
+      // Walls always kill; the tail cell is safe to enter unless we grow.
+      const body = eats ? snake : snake.slice(0, -1);
+      if (
+        head.x < 0 || head.x >= GRID || head.y < 0 || head.y >= GRID ||
+        body.some((s) => s.x === head.x && s.y === head.y)
+      ) {
+        gameOver = true;
+        showGameOver();
+        return;
+      }
+
+      snake.unshift(head);
+      if (eats) {
+        score += POINTS_PER_FOOD;
+        scoreEl.textContent = String(score);
+        tickMs = Math.max(MIN_SPEED_MS, tickMs - SPEEDUP_PER_FOOD);
+        food = placeFood();
+        if (snake.length === GRID * GRID) {
+          gameOver = true;
+          showGameOver("You win!");
+          return;
+        }
+      } else {
+        snake.pop();
+      }
+      draw();
+    }
+
+    function scheduleTick() {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        if (started && !paused && !gameOver) step();
+        if (!gameOver) scheduleTick();
+      }, tickMs);
+    }
+
+    function start() {
+      clearTimeout(timer);
+      reset();
+      scheduleTick();
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // Faint grid lines.
+      ctx.strokeStyle = "rgba(148, 163, 184, 0.08)";
+      ctx.lineWidth = 1;
+      for (let i = 1; i < GRID; i++) {
+        ctx.beginPath();
+        ctx.moveTo(i * CELL + 0.5, 0);
+        ctx.lineTo(i * CELL + 0.5, canvas.height);
+        ctx.moveTo(0, i * CELL + 0.5);
+        ctx.lineTo(canvas.width, i * CELL + 0.5);
+        ctx.stroke();
+      }
+
+      // Food.
+      ctx.fillStyle = "#f87171";
+      ctx.beginPath();
+      ctx.arc(
+        food.x * CELL + CELL / 2,
+        food.y * CELL + CELL / 2,
+        CELL / 2 - 3,
+        0,
+        Math.PI * 2
+      );
+      ctx.fill();
+
+      // Snake: head bright, body slightly dimmer.
+      snake.forEach((seg, i) => {
+        ctx.fillStyle = i === 0 ? "#4ade80" : "#22c55e";
+        ctx.fillRect(seg.x * CELL + 1, seg.y * CELL + 1, CELL - 2, CELL - 2);
+      });
+    }
+
+    function showGameOver(title = "Game over") {
+      overlayTitle.textContent = title;
+      overlayScore.textContent = `Final score: ${score}`;
+      saveForm.classList.toggle("hidden", score < POINTS_PER_FOOD);
+      saveStatus.textContent = "";
+      overlay.classList.remove("hidden");
+      nameInput.focus();
+    }
+
+    function hideOverlay() {
+      overlay.classList.add("hidden");
+    }
+
+    function togglePause() {
+      if (!started || gameOver) return;
+      paused = !paused;
+      if (paused) {
+        overlayTitle.textContent = "Paused";
+        overlayScore.textContent = "Press Space to resume";
+        saveForm.classList.add("hidden");
+        saveStatus.textContent = "";
+        overlay.classList.remove("hidden");
+      } else {
+        hideOverlay();
+      }
+    }
+
+    window.addEventListener("keydown", (e) => {
+      const keys = {
+        ArrowUp: UP, w: UP, W: UP,
+        ArrowDown: DOWN, s: DOWN, S: DOWN,
+        ArrowLeft: LEFT, a: LEFT, A: LEFT,
+        ArrowRight: RIGHT, d: RIGHT, D: RIGHT,
+      };
+      if (keys[e.key]) {
+        e.preventDefault();
+        if (gameOver) return;
+        queueDir(keys[e.key]);
+        if (paused) togglePause();
+        return;
+      }
+      if (e.key === " ") {
+        e.preventDefault();
+        togglePause();
+      } else if (e.key === "Enter" && gameOver) {
+        start();
+      }
+    });
+
+    restartBtn.addEventListener("click", start);
+
+    saveForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      saveStatus.textContent = "Saving…";
+      const name = nameInput.value.trim();
+      try {
+        const res = await fetch(`${API_BASE}/api/highscores`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name, score }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        localStorage.setItem("snake-name", name);
+        saveStatus.textContent = "Saved!";
+        saveForm.classList.add("hidden");
+        await loadHighscores();
+      } catch {
+        saveStatus.textContent = "Could not save — is the server running?";
+      }
+    });
+
+    async function loadHighscores() {
+      try {
+        const res = await fetch(`${API_BASE}/api/highscores`);
+        const scores = await res.json();
+        bestEl.textContent = scores.length ? String(scores[0].score) : "–";
+        listEl.innerHTML = "";
+        if (!scores.length) {
+          const li = document.createElement("li");
+          li.className = "empty";
+          li.textContent = "No scores yet";
+          listEl.appendChild(li);
+          return;
+        }
+        for (const s of scores) {
+          const li = document.createElement("li");
+          const name = document.createElement("span");
+          name.textContent = s.name;
+          const sc = document.createElement("span");
+          sc.className = "score";
+          sc.textContent = String(s.score);
+          li.append(name, sc);
+          listEl.appendChild(li);
+        }
+      } catch {
+        bestEl.textContent = "–";
+      }
+    }
+
+    // Restore the player's name from a previous session.
+    nameInput.value = localStorage.getItem("snake-name") ?? "";
+
+    start();
+    loadHighscores();
+  </script>
 </body>
 </html>
